@@ -1,0 +1,13 @@
+__pycache__/
+*.pyc
+.idea/
+*.iml
+.vscode/
+/result
+.direnv/
+/tachjson
+/tachcfg
+/tach
+/tachmus
+/tachtxt
+.mypy_cache/
