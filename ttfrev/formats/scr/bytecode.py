@@ -18,6 +18,37 @@ class classproperty(Generic[T, R]):
 
 
 class BytecodeOp:
+    """
+    Opcode for the SCR bytecode interpreter.
+
+    The vital info for the interpreter:
+        * 32-bit stack-based virtual machine.
+        * Ops are variable-length encoded, consisting of a single 8 bit opcode,
+          and zero or more operand bytes, which may be interpreted as bytes,
+          words (32-bit) or half-words (16-bit).
+        * The stack "grows down"; space is allocated in the stack by adding to
+          the stack pointer, and removed by subtracting from the stack pointer.
+        * Ops may take stack parameters in addition to their operands. The ops
+          use left-to-right push order based on division/subtraction
+          conventions, such that for a 2-parameter op, the second parameter is
+          at the top of the stack.
+        * The interpreter has an unknown array (referred to as "array 2" for
+          lack of better conventions) which is read only (results can only be
+          read from).
+        * The interpreter has two read-write global data blocks, inventively
+          termed data block 0 and data block 1, with a script-configurable size
+          (though the bytecode ops can only address 256 bytes per block).
+        * Ops in the engine implementation pass the current stack pointer in
+          x86 register %ebp and the current program counter in register %esi.
+          The program counter register is used both to fetch operands, and for
+          control flow ops to modify the script program counter.
+        * Each script has a table of entry points which give several script
+          locations execution can start from or be transferred to.
+        * Each SCR file can contain multiple named scripts.
+        * Each SCR file ends with a list of named script commands for
+          operations such as sample playback volume adjustment, which the
+          script bytecode indexes into for relevant ops.
+    """
     _operand_bytes: bytes
 
     opcode: int
@@ -83,7 +114,8 @@ class Nop(BytecodeOp):
 
 class PushByteImmediate(BytecodeOp):
     """
-    Loads the lowest byte of the value stored at `i8` and pushes it to the top of the stack.
+    Takes a single-byte `immediate`, word-extends it, and pushes it to the
+    top of the stack.
     """
 
     opcode = 0x01
@@ -97,7 +129,7 @@ class PushByteImmediate(BytecodeOp):
 
 class PushWordImmediate(BytecodeOp):
     """
-    Loads the entire 32 bit value stored at `i8` and pushes it to the top of the stack.
+    Pushes the word-length `immediate` to the top of the stack.
     """
 
     opcode = 0x02
@@ -111,7 +143,8 @@ class PushWordImmediate(BytecodeOp):
 
 class PushWordBlk0(BytecodeOp):
     """
-    Loads the entire 32-bit value at index `i8` in data block 0 and pushes it to the top of the stack.
+    Loads a 32-bit value at index `slot` in data block 0 and pushes it
+    to the top of the stack.
     """
 
     opcode = 0x03
@@ -125,7 +158,8 @@ class PushWordBlk0(BytecodeOp):
 
 class PushWordBlk1(BytecodeOp):
     """
-    Loads the entire 32-bit value at index `i8` in data block 0 and pushes it to the top of the stack.
+    Loads a 32-bit value at index `slot` in data block 0 and pushes it
+    to the top of the stack.
     """
 
     opcode = 0x04
@@ -139,7 +173,11 @@ class PushWordBlk1(BytecodeOp):
 
 class PushRefBlk0(BytecodeOp):
     """
-    Loads the entire 32-bit value at index `i8` in data block 0 and pushes it to the top of the stack.
+    Pushes the machine pointer of index `slot` in data block 0 to the top of
+    the stack.
+
+    Note: In the engine, this is not a code pointer in the script! It's a
+    pointer within the real address space of the interpreter.
     """
 
     opcode = 0x05
@@ -153,7 +191,11 @@ class PushRefBlk0(BytecodeOp):
 
 class PushRefBlk1(BytecodeOp):
     """
-    Loads the entire 32-bit value at index `i8` in data block 1 and pushes it to the top of the stack.
+    Pushes the machine pointer of index `slot` in data block 1 to the top of
+    the stack.
+
+    NOTE: In the engine, this is not a code pointer in the script! It's a
+    pointer within the real address space of the interpreter.
     """
 
     opcode = 0x06
@@ -166,6 +208,10 @@ class PushRefBlk1(BytecodeOp):
 
 
 class PushWordArray2(BytecodeOp):
+    """
+    Loads the 32-bit value at index `slot` in "array 2" and pushes it to the
+    top of the stack.
+    """
 
     opcode = 0x06
     operand_format = "B"
@@ -178,6 +224,8 @@ class PushWordArray2(BytecodeOp):
 
 class PopWordBlk0(BytecodeOp):
     """
+    Remove the item at the top of the stack and store it into data block 0 at
+    index `slot`.
     """
 
     opcode = 0x08
@@ -191,6 +239,8 @@ class PopWordBlk0(BytecodeOp):
 
 class PopWordBlk1(BytecodeOp):
     """
+    Remove the item at the top of the stack and store it into data block 1 at
+    index `slot`.
     """
 
     opcode = 0x09
@@ -204,6 +254,14 @@ class PopWordBlk1(BytecodeOp):
 
 class PopMultipleWordsBlk0(BytecodeOp):
     """
+    Remove `size_bytes` from the stack and store them in data block 0
+    starting from index `slot`.
+
+    IMPORTANT: Though the `size_bytes` operand is in bytes, not in words, the
+    engine's interpreter will probably malfunction if `size_bytes` is not a
+    multiple of 4.
+
+    TODO: This also sets some internal flag in the interpreter?
     """
 
     opcode = 0x0A
@@ -221,6 +279,14 @@ class PopMultipleWordsBlk0(BytecodeOp):
 
 class PopMultipleWordsBlk1(BytecodeOp):
     """
+    Remove `size_bytes` from the stack and store them in data block 1
+    starting from index `slot`.
+
+    IMPORTANT: Though the `size_bytes` operand is in bytes, not in words, the
+    engine's interpreter will probably malfunction if `size_bytes` is not a
+    multiple of 4.
+
+    NOTE: unlike POPMW.BLK0, this doesn't set an interpreter flag.
     """
 
     opcode = 0x0B
@@ -238,6 +304,11 @@ class PopMultipleWordsBlk1(BytecodeOp):
 
 class PushControlBlock(BytecodeOp):
     """
+    Pushes the machine pointer to the "script control block" (interpreter
+    state) to the stack.
+
+    NOTE: As before, machine pointer here refers to a pointer into the engine
+    address space, not in the bytecode interpreter.
     """
 
     opcode = 0x0C
@@ -246,6 +317,7 @@ class PushControlBlock(BytecodeOp):
 
 class PopAll(BytecodeOp):
     """
+    Reset the stack to the initial state, clearing it.
     """
 
     opcode = 0x0F
@@ -254,6 +326,8 @@ class PopAll(BytecodeOp):
 
 class Add(BytecodeOp):
     """
+    Removes the top two items from the stack, adds them, then pushes the result
+    onto the stack.
     """
 
     opcode = 0x10
@@ -262,6 +336,8 @@ class Add(BytecodeOp):
 
 class Subtract(BytecodeOp):
     """
+    Removes the top two items from the stack, subtracts the second item from
+    the first, then pushes the result onto the stack.
     """
 
     opcode = 0x11
@@ -270,6 +346,8 @@ class Subtract(BytecodeOp):
 
 class Multiply(BytecodeOp):
     """
+    Removes the top two items from the stack, multiplies them, then pushes the
+    result onto the stack. The result is truncated to one word.
     """
 
     opcode = 0x12
@@ -278,6 +356,11 @@ class Multiply(BytecodeOp):
 
 class Divide(BytecodeOp):
     """
+    Removes the top two items from the stack, divides the second item by the
+    first, then pushes the result onto the stack.
+
+    NOTE: This is implemented in terms of x86 IDIV, so the result is truncated
+    toward zero.
     """
 
     opcode = 0x13
@@ -286,6 +369,8 @@ class Divide(BytecodeOp):
 
 class Modulus(BytecodeOp):
     """
+    Removes the top two items from the stack, divides the second item by the
+    first, then pushes the remainder onto the stack (AKA modular division).
     """
 
     opcode = 0x14
@@ -294,6 +379,8 @@ class Modulus(BytecodeOp):
 
 class LogicalAnd(BytecodeOp):
     """
+    Removes the top two items from the stack, and if either item is zero,
+    pushes a zero onto the stack. Otherwise, pushes -1 (0xFFFFFFFF).
     """
 
     opcode = 0x15
@@ -302,6 +389,8 @@ class LogicalAnd(BytecodeOp):
 
 class LogicalOr(BytecodeOp):
     """
+    Removes the top two items from the stack, and if both items are zero,
+    pushes a zero onto the stack. Otherwise, pushes -1 (0xFFFFFFFF).
     """
 
     opcode = 0x16
@@ -310,6 +399,8 @@ class LogicalOr(BytecodeOp):
 
 class BitwiseAnd(BytecodeOp):
     """
+    Removes the top two items from the stack, performs the bitwise AND of the
+    two items, and pushes the result onto the stack.
     """
 
     opcode = 0x17
@@ -318,6 +409,8 @@ class BitwiseAnd(BytecodeOp):
 
 class BitwiseOr(BytecodeOp):
     """
+    Removes the top two items from the stack, performs the bitwise OR of the
+    two items, and pushes the result onto the stack.
     """
 
     opcode = 0x18
@@ -326,6 +419,8 @@ class BitwiseOr(BytecodeOp):
 
 class BitwiseXor(BytecodeOp):
     """
+    Removes the top two items from the stack, performs the bitwise exclusive-OR
+    of the two items, and pushes the result onto the stack.
     """
 
     opcode = 0x19
@@ -334,6 +429,8 @@ class BitwiseXor(BytecodeOp):
 
 class Negate(BytecodeOp):
     """
+    Negates (inverts the sign) of the item at the top of the stack,
+    equivalent mathematically to multiplying it by -1.
     """
 
     opcode = 0x1A
@@ -342,6 +439,7 @@ class Negate(BytecodeOp):
 
 class BitwiseNot(BytecodeOp):
     """
+    Performs a bitwise NOT on the item at the top of the stack.
     """
 
     opcode = 0x1B
@@ -350,6 +448,9 @@ class BitwiseNot(BytecodeOp):
 
 class ShiftLeft(BytecodeOp):
     """
+    Removes the top two items from the stack, shifts the value of the first
+    item left by the number of times given by the second item, then pushes the
+    result onto the stack.
     """
 
     opcode = 0x1C
@@ -358,6 +459,9 @@ class ShiftLeft(BytecodeOp):
 
 class ArithmeticShiftRight(BytecodeOp):
     """
+    Removes the top two items from the stack, shifts the value of the first
+    item right by the number of times given by the second item, then pushes the
+    result onto the stack. This is an arithmetic (sign-extending) right shift.
     """
 
     opcode = 0x1D
@@ -366,6 +470,8 @@ class ArithmeticShiftRight(BytecodeOp):
 
 class CompareZero(BytecodeOp):
     """
+    Removes the top item from the stack. If it is equal to zero, pushes
+    -1 (0xFFFFFFFF) onto the stack. Otherwise 0 is pushed onto the stack.
     """
 
     opcode = 0x1E
@@ -374,6 +480,8 @@ class CompareZero(BytecodeOp):
 
 class Compare(BytecodeOp):
     """
+    Removes the top two items from the stack. If they are equal, pushes
+    -1 (0xFFFFFFFF) onto the stack. Otherwise 0 is pushed onto the stack.
     """
 
     opcode = 0x20
@@ -382,6 +490,8 @@ class Compare(BytecodeOp):
 
 class CompareNotEqual(BytecodeOp):
     """
+    Removes the top two items from the stack. If they are NOT equal, pushes
+    -1 (0xFFFFFFFF) onto the stack. Otherwise 0 is pushed onto the stack.
     """
 
     opcode = 0x21
@@ -390,6 +500,9 @@ class CompareNotEqual(BytecodeOp):
 
 class CompareGreaterEqual(BytecodeOp):
     """
+    Removes the top two items from the stack. If they are equal or the first
+    item is greater than the second, pushes -1 (0xFFFFFFFF) onto the stack.
+    Otherwise 0 is pushed onto the stack.
     """
 
     opcode = 0x22
@@ -398,6 +511,9 @@ class CompareGreaterEqual(BytecodeOp):
 
 class CompareLessEqual(BytecodeOp):
     """
+    Removes the top two items from the stack. If they are equal or the first
+    item is less than the second, pushes -1 (0xFFFFFFFF) onto the stack.
+    Otherwise 0 is pushed onto the stack.
     """
 
     opcode = 0x23
@@ -406,6 +522,9 @@ class CompareLessEqual(BytecodeOp):
 
 class CompareGreaterThan(BytecodeOp):
     """
+    Removes the top two items from the stack. If the first item is greater than
+    the second, pushes -1 (0xFFFFFFFF) onto the stack. Otherwise 0 is pushed
+    onto the stack.
     """
 
     opcode = 0x24
@@ -414,6 +533,9 @@ class CompareGreaterThan(BytecodeOp):
 
 class CompareLessThan(BytecodeOp):
     """
+    Removes the top two items from the stack. If the first item is less than
+    the second, pushes -1 (0xFFFFFFFF) onto the stack. Otherwise 0 is pushed
+    onto the stack.
     """
 
     opcode = 0x25
@@ -422,6 +544,7 @@ class CompareLessThan(BytecodeOp):
 
 class IncrementBlk0(BytecodeOp):
     """
+    Increments the word at index `slot` in data block 0 by 1.
     """
 
     opcode = 0x28
@@ -435,6 +558,7 @@ class IncrementBlk0(BytecodeOp):
 
 class DecrementBlk0(BytecodeOp):
     """
+    Decrements the word at index `slot` in data block 0 by 1.
     """
 
     opcode = 0x29
@@ -448,6 +572,7 @@ class DecrementBlk0(BytecodeOp):
 
 class IncrementBlk1(BytecodeOp):
     """
+    Increments the word at index `slot` in data block 1 by 1.
     """
 
     opcode = 0x2A
@@ -461,6 +586,7 @@ class IncrementBlk1(BytecodeOp):
 
 class DecrementBlk1(BytecodeOp):
     """
+    Decrements the word at index `slot` in data block 1 by 1.
     """
 
     opcode = 0x2B
@@ -474,6 +600,8 @@ class DecrementBlk1(BytecodeOp):
 
 class JumpUnconditional(BytecodeOp):
     """
+    Moves the program counter of the bytecode interpreter to `target` relative
+    to the start of the bytecode program.
     """
 
     opcode = 0x30
@@ -485,26 +613,34 @@ class JumpUnconditional(BytecodeOp):
         return self.operands[0]
 
 
-class JumpEqual(BytecodeOp):
+class JumpZero(BytecodeOp):
     """
+    If the top item in the stack is zero, moves the program counter of the
+    bytecode interpreter to `target` relative to the start of the bytecode
+    program. Otherwise, execution continues as normal. The stack is
+    not modified.
     """
 
     opcode = 0x31
     operand_format = "<I"
-    mnemonic = "JEQ"
+    mnemonic = "JZ"
 
     @property
     def target(self) -> int:
         return self.operands[0]
 
 
-class JumpNotEqual(BytecodeOp):
+class JumpNotZero(BytecodeOp):
     """
+    If the top item in the stack is not zero, moves the program counter of
+    the bytecode interpreter to `target` relative to the start of the bytecode
+    program. Otherwise, execution continues as normal. The stack is
+    not modified.
     """
 
     opcode = 0x32
     operand_format = "<I"
-    mnemonic = "JNE"
+    mnemonic = "JNZ"
 
     @property
     def target(self) -> int:
@@ -513,6 +649,8 @@ class JumpNotEqual(BytecodeOp):
 
 class Unknown3(BytecodeOp):
     """
+    It is not currently known what this opcode does.
+    TODO: Figure that out.
     """
 
     opcode = 0x33
@@ -526,6 +664,8 @@ class Unknown3(BytecodeOp):
 
 class Unknown4(BytecodeOp):
     """
+    It is not currently known what this opcode does.
+    TODO: Figure that out.
     """
 
     opcode = 0x34
@@ -539,6 +679,9 @@ class Unknown4(BytecodeOp):
 
 class Unknown5(BytecodeOp):
     """
+    It is not currently known what this opcode does.
+    It may have a conditional operand length?
+    TODO: Figure that out.
     """
 
     opcode = 0x35
@@ -552,6 +695,11 @@ class Unknown5(BytecodeOp):
 
 class Pop(BytecodeOp):
     """
+    Pops the top `num_slots` slots from the stack and saves them into
+    temporary storage.
+
+    NOTE: Unlike the COPY ops, this *is* number of slots, NOT number of
+    stack bttes.
     """
 
     opcode = 0x38
@@ -565,6 +713,9 @@ class Pop(BytecodeOp):
 
 class Test(BytecodeOp):
     """
+    Appears to be unused in scripts; maybe a leftover?
+    Takes the top item from the stack, and if the item is greater than 0, the
+    carry flag is set. Otherwise the carry flag is cleared.
     """
 
     opcode = 0x39
@@ -573,6 +724,9 @@ class Test(BytecodeOp):
 
 class SwitchScript(BytecodeOp):
     """
+    Sets the program counter to the script address indicated by entry
+    `entry_point` in the entry point table.
+    TODO: Is this used to do function calls?
     """
 
     opcode = 0x3B
@@ -586,6 +740,8 @@ class SwitchScript(BytecodeOp):
 
 class PlaySoundHalfWord(BytecodeOp):
     """
+    Plays the sound sample at index `sound_id` in the currently attached SBF.
+    The operand is a 16-bit integer.
     """
 
     opcode = 0x3D
@@ -599,6 +755,8 @@ class PlaySoundHalfWord(BytecodeOp):
 
 class PlaySoundByte(BytecodeOp):
     """
+    Plays the sound sample at index `sound_id` in the currently attached SBF.
+    The operand is an 8-bit integer.
     """
 
     opcode = 0x3E
@@ -612,6 +770,7 @@ class PlaySoundByte(BytecodeOp):
 
 class RestartScript(BytecodeOp):
     """
+    Sets the interpreter's program counter back to the beginning of the script.
     """
 
     opcode = 0x3F
@@ -620,6 +779,8 @@ class RestartScript(BytecodeOp):
 
 class SoundCmd(BytecodeOp):
     """
+    Executes the named command at index `command_id` in the script command
+    table specified in this script file.
     """
 
     opcode = 0x40
