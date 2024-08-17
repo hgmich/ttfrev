@@ -28,7 +28,7 @@ from construct import (
 from construct_typed import DataclassMixin, DataclassStruct, EnumBase, TEnum, csfield
 from typing import Any
 from pathlib import Path
-from .bytecode import SoundCmd, SwitchScript, parse_bytecode, BytecodeOp
+from .bytecode import Interpreter, SoundCmd, SwitchScript, parse_bytecode, BytecodeOp
 
 import math
 from datetime import datetime
@@ -40,8 +40,8 @@ class SCREntry(DataclassMixin):
     signature: bytes = csfield(Const(b"MU01"))
     field_4: int = csfield(Hex(Int32ul))
     name: str = csfield(PaddedString(16, "ascii"))
-    data1_size: int = csfield(Hex(Int32ul))
-    data2_size: int = csfield(Hex(Int32ul))
+    block0_size: int = csfield(Hex(Int32ul))
+    block1_size: int = csfield(Hex(Int32ul))
     script_base_offset: int = csfield(Hex(Int32ul))
     _code_labels_offset: int = csfield(Hex(Int32ul))
     _code_labels_count: int = csfield(Hex(Int32ul))
@@ -56,10 +56,6 @@ class SCREntry(DataclassMixin):
     code_labels: list[int] = csfield(Pointer(this._file_start + this._code_labels_offset, Array(this._code_labels_count, Hex(Int32ul))))
     script_bytes: bytes = csfield(Pointer(this._file_start + this.script_base_offset, Bytes(this.array2_ptr - this.script_base_offset)))
     script: list[BytecodeOp] = csfield(Computed(lambda this: parse_bytecode(this.script_bytes)))
-
-    def extract_entry_to_file(self, *, directory: Path):
-        with open((directory / self.name).with_suffix(".sbe"), "wb") as outf:
-            outf.write(self.content())
 
 
 @dataclass
@@ -83,6 +79,7 @@ class SCREntPtr(DataclassMixin):
     _val: int = csfield(Hex(Int32ul))
     entry: SCREntry = csfield(Pointer(this._val, DataclassStruct(SCREntry)))
 
+
 @dataclass
 class SCRFile(DataclassMixin):
     header: SCRHeader = csfield(DataclassStruct(SCRHeader))
@@ -100,6 +97,9 @@ def inspect_cmd(args):
 
     scr = format.parse_stream(args.file)
 
+    if scr is None:
+        raise TypeError("Invalid SCR file")
+
     print(scr.header)
     print(scr.commands)
 
@@ -114,44 +114,23 @@ def inspect_cmd(args):
 def list_cmd(args):
     format = DataclassStruct(SCRFile)
 
-    sbf = format.parse_stream(args.file)
+    scr = format.parse_stream(args.file)
 
-    for ent in sbf.entries:
-        print(ent.name)
+    if scr is None:
+        raise TypeError("Invalid SCR file")
+
+    for ent in scr.entry_table:
+        print(ent.entry.name)
     return True
-
-
-def extract_cmd(args):
-    from fnmatch import fnmatch
-    from pathlib import Path
-
-    format = DataclassStruct(SCRFile)
-
-    sbf = format.parse_stream(args.file)
-
-    # Ensure dest dir exists
-    args.directory.mkdir(parents=True, exist_ok=True)
-
-    found_entries = False
-    lower_entry_names = tuple(map(lambda ent: ent.lower(), args.entry_names))
-    for ent in sbf.entries:
-        iname = ent.name.lower()
-        for name_pat in lower_entry_names:
-            if fnmatch(iname, name_pat):
-                print(f"Extracting {ent.name}")
-                ent.extract_entry_to_file(directory=args.directory)
-                found_entries = True
-                break
-
-    if not found_entries:
-        print(f"Failed to find {args.entry_name} in SCR file!")
-    return found_entries
 
 
 def disassemble_cmd(args):
     format = DataclassStruct(SCRFile)
 
-    scr: SCRFile = format.parse_stream(args.file)
+    scr = format.parse_stream(args.file)
+
+    if scr is None:
+        raise TypeError("Invalid SCR file")
 
     script_entry: SCREntry = scr.entry_table[args.script_idx].entry
     script_labels = {(v - script_entry.script_base_offset):i for i, v in enumerate(script_entry.code_labels)}
@@ -171,13 +150,34 @@ def disassemble_cmd(args):
         pc += (op.operands_len + 1)
 
 
+def execute_cmd(args):
+    format = DataclassStruct(SCRFile)
+
+    scr = format.parse_stream(args.file)
+
+    if scr is None:
+        raise TypeError("Invalid SCR file")
+
+    script_entry: SCREntry = scr.entry_table[args.script_idx].entry
+    vm = Interpreter(
+        block0_size=script_entry.block0_size,
+        block1_size=script_entry.block1_size,
+        ip=script_entry.next_code_label,
+        entry_points=[(addr - script_entry.script_base_offset) for addr in script_entry.code_labels],
+        script=script_entry.script_bytes,
+        cmd_list=scr.commands,
+    )
+
+    print("TODO: interpret")
+
+
 def main():
     import argparse
     import sys
     from pathlib import Path
 
     parser = argparse.ArgumentParser(description="SCR file inspector")
-    cmd_parsers = parser.add_subparsers()
+    cmd_parsers = parser.add_subparsers(required=True, metavar="cmd")
 
     inspect_parser = cmd_parsers.add_parser(
         "inspect", aliases=["i"], help="inspect a SCR file interactively"
@@ -218,32 +218,30 @@ def main():
     )
     disassemble_parser.set_defaults(handler=disassemble_cmd)
 
-    extract_parser = cmd_parsers.add_parser(
-        "extract", aliases=["x"], help="extract file entry from an SCR file"
+    execute_parser = cmd_parsers.add_parser(
+        "execute", aliases=["r", "exec"], help="execute script"
     )
-    extract_parser.add_argument(
+    execute_parser.add_argument(
         "file",
         metavar="FILE",
         type=argparse.FileType("rb"),
         help="SCR file to operate on",
     )
-    extract_parser.add_argument(
-        "-C",
-        "--directory",
-        dest="directory",
-        type=Path,
-        default=Path("."),
-        help="directory to extract to",
+    execute_parser.add_argument(
+        "script_idx",
+        metavar="SCRIPT",
+        type=int,
+        help="Which script to list disassembly for",
     )
-
-    extract_parser.add_argument(
-        "entry_names",
-        metavar="ENTRY",
-        nargs="*",
-        type=str,
-        help="Entries to extract. Also accepts UNIX-style file path globs as processed by fnmatch. If unspecified, all are extracted.",
+    execute_parser.add_argument(
+        "-e",
+        "--entry-point",
+        dest="entry_point",
+        type=int,
+        default=0,
+        help="which entry point to use",
     )
-    extract_parser.set_defaults(handler=extract_cmd, entry_names=["*"])
+    execute_parser.set_defaults(handler=execute_cmd)
 
     args = parser.parse_args()
     res = args.handler(args)

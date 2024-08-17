@@ -3,6 +3,10 @@ import struct
 from typing import Optional, ClassVar, Any, Callable, Generic, TypeVar
 from collections import defaultdict
 from io import BufferedIOBase, BytesIO
+from logging import Logger
+
+
+log = Logger("interpreter")
 
 
 T = TypeVar("T")
@@ -90,6 +94,7 @@ class BytecodeOp:
 
 
 class InvalidOp(BytecodeOp):
+    __match_args__ = ('opcode',)
     def __init__(self, opcode: int):
         super().__init__(b"")
         self._opcode = opcode
@@ -118,6 +123,8 @@ class PushByteImmediate(BytecodeOp):
     top of the stack.
     """
 
+    __match_args__ = ('immediate',)
+
     opcode = 0x01
     operand_format = "B"
     mnemonic = "PUSHB.I"
@@ -131,6 +138,8 @@ class PushWordImmediate(BytecodeOp):
     """
     Pushes the word-length `immediate` to the top of the stack.
     """
+
+    __match_args__ = ('immediate',)
 
     opcode = 0x02
     operand_format = "<I"
@@ -147,6 +156,8 @@ class PushWordBlk0(BytecodeOp):
     to the top of the stack.
     """
 
+    __match_args__ = ('slot',)
+
     opcode = 0x03
     operand_format = "B"
     mnemonic = "PUSHW.BLK0"
@@ -161,6 +172,8 @@ class PushWordBlk1(BytecodeOp):
     Loads a 32-bit value at index `slot` in data block 0 and pushes it
     to the top of the stack.
     """
+
+    __match_args__ = ('slot',)
 
     opcode = 0x04
     operand_format = "B"
@@ -180,6 +193,8 @@ class PushRefBlk0(BytecodeOp):
     pointer within the real address space of the interpreter.
     """
 
+    __match_args__ = ('slot',)
+
     opcode = 0x05
     operand_format = "B"
     mnemonic = "PUSHP.BLK0"
@@ -198,6 +213,8 @@ class PushRefBlk1(BytecodeOp):
     pointer within the real address space of the interpreter.
     """
 
+    __match_args__ = ('slot',)
+
     opcode = 0x06
     operand_format = "B"
     mnemonic = "PUSHP.BLK1"
@@ -213,12 +230,15 @@ class PushWordArray2(BytecodeOp):
     top of the stack.
     """
 
+    __match_args__ = ('slot',)
+
+
     opcode = 0x06
     operand_format = "B"
     mnemonic = "PUSHW.A2"
 
     @property
-    def index(self) -> int:
+    def slot(self) -> int:
         return self.operands[0]
 
 
@@ -227,6 +247,8 @@ class PopWordBlk0(BytecodeOp):
     Remove the item at the top of the stack and store it into data block 0 at
     index `slot`.
     """
+
+    __match_args__ = ('slot',)
 
     opcode = 0x08
     operand_format = "B"
@@ -242,6 +264,8 @@ class PopWordBlk1(BytecodeOp):
     Remove the item at the top of the stack and store it into data block 1 at
     index `slot`.
     """
+
+    __match_args__ = ('slot',)
 
     opcode = 0x09
     operand_format = "B"
@@ -263,6 +287,8 @@ class PopMultipleWordsBlk0(BytecodeOp):
 
     TODO: This also sets some internal flag in the interpreter?
     """
+
+    __match_args__ = ('start_slot', 'size_bytes')
 
     opcode = 0x0A
     operand_format = "BB"
@@ -288,6 +314,8 @@ class PopMultipleWordsBlk1(BytecodeOp):
 
     NOTE: unlike POPMW.BLK0, this doesn't set an interpreter flag.
     """
+
+    __match_args__ = ('start_slot', 'size_bytes')
 
     opcode = 0x0B
     operand_format = "BB"
@@ -547,6 +575,8 @@ class IncrementBlk0(BytecodeOp):
     Increments the word at index `slot` in data block 0 by 1.
     """
 
+    __match_args__ = ('slot',)
+
     opcode = 0x28
     operand_format = "B"
     mnemonic = "INC.BLK0"
@@ -560,6 +590,8 @@ class DecrementBlk0(BytecodeOp):
     """
     Decrements the word at index `slot` in data block 0 by 1.
     """
+
+    __match_args__ = ('slot',)
 
     opcode = 0x29
     operand_format = "B"
@@ -575,6 +607,8 @@ class IncrementBlk1(BytecodeOp):
     Increments the word at index `slot` in data block 1 by 1.
     """
 
+    __match_args__ = ('slot',)
+
     opcode = 0x2A
     operand_format = "B"
     mnemonic = "INC.BLK1"
@@ -588,6 +622,8 @@ class DecrementBlk1(BytecodeOp):
     """
     Decrements the word at index `slot` in data block 1 by 1.
     """
+
+    __match_args__ = ('slot',)
 
     opcode = 0x2B
     operand_format = "B"
@@ -603,6 +639,8 @@ class JumpUnconditional(BytecodeOp):
     Moves the program counter of the bytecode interpreter to `target` relative
     to the start of the bytecode program.
     """
+
+    __match_args__ = ('target',)
 
     opcode = 0x30
     operand_format = "<I"
@@ -621,6 +659,8 @@ class JumpZero(BytecodeOp):
     not modified.
     """
 
+    __match_args__ = ('target',)
+
     opcode = 0x31
     operand_format = "<I"
     mnemonic = "JZ"
@@ -638,6 +678,8 @@ class JumpNotZero(BytecodeOp):
     not modified.
     """
 
+    __match_args__ = ('target',)
+
     opcode = 0x32
     operand_format = "<I"
     mnemonic = "JNZ"
@@ -652,6 +694,8 @@ class Unknown3(BytecodeOp):
     It is not currently known what this opcode does.
     TODO: Figure that out.
     """
+
+    __match_args__ = ('op0',)
 
     opcode = 0x33
     operand_format = "B"
@@ -668,6 +712,8 @@ class Unknown4(BytecodeOp):
     TODO: Figure that out.
     """
 
+    __match_args__ = ('op0',)
+
     opcode = 0x34
     operand_format = "<I"
     mnemonic = "UNK.4"
@@ -680,17 +726,32 @@ class Unknown4(BytecodeOp):
 class Unknown5(BytecodeOp):
     """
     It is not currently known what this opcode does.
-    It may have a conditional operand length?
+    It seems to be some sort of conditional relative jump?
     TODO: Figure that out.
     """
 
+    __match_args__ = ('op0', 'op1', 'op2', 'op3')
+
     opcode = 0x35
-    operand_format = "B"
+    operand_format = "BBBB"
     mnemonic = "UNK.5"
 
     @property
     def op0(self) -> int:
         return self.operands[0]
+
+    @property
+    def op1(self) -> int:
+        return self.operands[1]
+
+    @property
+    def op2(self) -> int:
+        return self.operands[2]
+
+    @property
+    def op3(self) -> int:
+        return self.operands[3]
+
 
 
 class Pop(BytecodeOp):
@@ -701,6 +762,8 @@ class Pop(BytecodeOp):
     NOTE: Unlike the COPY ops, this *is* number of slots, NOT number of
     stack bttes.
     """
+
+    __match_args__ = ('num_slots',)
 
     opcode = 0x38
     operand_format = "B"
@@ -729,6 +792,8 @@ class SwitchScript(BytecodeOp):
     TODO: Is this used to do function calls?
     """
 
+    __match_args__ = ('entry_point',)
+
     opcode = 0x3B
     operand_format = "B"
     mnemonic = "SCR"
@@ -744,6 +809,8 @@ class PlaySoundHalfWord(BytecodeOp):
     The operand is a 16-bit integer.
     """
 
+    __match_args__ = ('sound_id',)
+
     opcode = 0x3D
     operand_format = "<H"
     mnemonic = "PLAY.H"
@@ -758,6 +825,8 @@ class PlaySoundByte(BytecodeOp):
     Plays the sound sample at index `sound_id` in the currently attached SBF.
     The operand is an 8-bit integer.
     """
+
+    __match_args__ = ('sound_id',)
 
     opcode = 0x3E
     operand_format = "B"
@@ -782,6 +851,8 @@ class SoundCmd(BytecodeOp):
     Executes the named command at index `command_id` in the script command
     table specified in this script file.
     """
+
+    __match_args__ = ('command_id',)
 
     opcode = 0x40
     operand_format = "B"
@@ -846,6 +917,29 @@ OPCODES: tuple[type[BytecodeOp], ...] = (
     RestartScript,
     SoundCmd,
 )
+
+
+class Interpreter:
+    """
+    Test interpreter for SCR bytecode
+    """
+
+    block0: bytearray
+    block1: bytearray
+
+    ip: int
+    entry_points: list[int]
+    stack: list[int] = []
+    script: bytes
+    cmd_list: list[str]
+
+    def __init__(self, block0_size: int, block1_size: int, ip: int, entry_points: list[int], script: bytes, cmd_list: list[str]):
+        self.block0 = bytearray(block0_size)
+        self.block1 = bytearray(block1_size)
+        self.ip = ip
+        self.entry_points = entry_points
+        self.script = script
+        self.cmd_list = cmd_list
 
 
 OPCODE_LOOKUP: dict[int, type[BytecodeOp]] = {op.opcode:op for op in OPCODES}
