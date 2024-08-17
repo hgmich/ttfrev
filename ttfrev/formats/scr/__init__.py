@@ -2,6 +2,7 @@
 
 from dataclasses import dataclass
 from construct import (
+    HexDisplayedInteger,
     Lazy,
     Array,
     LazyArray,
@@ -25,13 +26,21 @@ from construct import (
     obj_,
     Tell,
 )
+from construct.lib.hex import HexDisplayedBytes
 from construct_typed import DataclassMixin, DataclassStruct, EnumBase, TEnum, csfield
 from typing import Any
 from pathlib import Path
+
+from ttfrev.formats.common import LOG_FORMAT
 from .bytecode import Interpreter, SoundCmd, SwitchScript, parse_bytecode, BytecodeOp
 
 import math
 from datetime import datetime
+
+import logging
+
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -53,7 +62,7 @@ class SCREntry(DataclassMixin):
     field_40: int = csfield(Hex(Int32ul))
     field_44: int = csfield(Hex(Int32ul))
     file_name: str = csfield(Pointer(this._file_start + this._file_name_offset, PaddedString(this._file_name_len, "ascii")))
-    code_labels: list[int] = csfield(Pointer(this._file_start + this._code_labels_offset, Array(this._code_labels_count, Hex(Int32ul))))
+    code_labels: list[HexDisplayedInteger] = csfield(Pointer(this._file_start + this._code_labels_offset, Array(this._code_labels_count, Hex(Int32ul))))
     script_bytes: bytes = csfield(Pointer(this._file_start + this.script_base_offset, Bytes(this.array2_ptr - this.script_base_offset)))
     script: list[BytecodeOp] = csfield(Computed(lambda this: parse_bytecode(this.script_bytes)))
 
@@ -168,7 +177,7 @@ def execute_cmd(args):
         cmd_list=scr.commands,
     )
 
-    print("TODO: interpret")
+    vm.run()
 
 
 def main():
@@ -177,6 +186,15 @@ def main():
     from pathlib import Path
 
     parser = argparse.ArgumentParser(description="SCR file inspector")
+
+    parser.add_argument(
+        "-v",
+        dest="log_level",
+        action="count",
+        default=0,
+        help="enable additional logging (-v: info, -vv: debug)"
+    )
+
     cmd_parsers = parser.add_subparsers(required=True, metavar="cmd")
 
     inspect_parser = cmd_parsers.add_parser(
@@ -244,6 +262,20 @@ def main():
     execute_parser.set_defaults(handler=execute_cmd)
 
     args = parser.parse_args()
+
+    match args.log_level:
+        case 1:
+            log_level = logging.INFO
+        case lvl if lvl >= 2:
+            log_level = logging.DEBUG
+        case _:
+            log_level = logging.WARNING
+
+    logging.basicConfig(format=LOG_FORMAT, level=log_level)
+
+    if args.log_level > 2:
+        logger.warning("verbosity levels above 2 have no effect")
+
     res = args.handler(args)
     if not res:
         sys.exit()

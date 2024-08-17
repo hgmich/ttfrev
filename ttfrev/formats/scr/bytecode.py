@@ -3,10 +3,12 @@ import struct
 from typing import Optional, ClassVar, Any, Callable, Generic, TypeVar
 from collections import defaultdict
 from io import BufferedIOBase, BytesIO
-from logging import Logger
+import logging
+
+from ttfrev.formats.common import have_debug
 
 
-log = Logger("interpreter")
+logger = logging.getLogger(__name__)
 
 
 T = TypeVar("T")
@@ -927,7 +929,7 @@ class Interpreter:
     block0: bytearray
     block1: bytearray
 
-    ip: int
+    pc: int
     entry_points: list[int]
     stack: list[int] = []
     script: bytes
@@ -936,10 +938,85 @@ class Interpreter:
     def __init__(self, block0_size: int, block1_size: int, ip: int, entry_points: list[int], script: bytes, cmd_list: list[str]):
         self.block0 = bytearray(block0_size)
         self.block1 = bytearray(block1_size)
-        self.ip = ip
+        self.pc = ip
         self.entry_points = entry_points
         self.script = script
         self.cmd_list = cmd_list
+
+    def _stack_pop(self, n) -> list[int]:
+        stack_values = []
+        assert n > 0, "invalid stack pop length"
+
+        for _ in range(n):
+            stack_values.append(self.stack.pop())
+
+        # stack args are left-to-right so we need to reverse
+        stack_values.reverse()
+        return stack_values
+
+    @staticmethod
+    def _heap_write(fmt: str, block: bytearray, index: int, value: int):
+        start = index
+        end = index + struct.calcsize(fmt)
+        block[start:end] = struct.pack(fmt, value)
+
+    @staticmethod
+    def _heap_read(fmt: str, block: bytearray, index: int) -> int:
+        start = index
+        end = index + struct.calcsize(fmt)
+        v_bs = block[start:end]
+        return struct.unpack(fmt, v_bs)[0]
+
+    def _exec_op(self, op: BytecodeOp):
+        ctrl_flow_affected = False
+
+        match op:
+            case Nop():
+                pass
+            case InvalidOp(opcode):
+                raise ValueError(f"illegal opcode {opcode:02X}")
+            case PushByteImmediate(immediate) | PushWordImmediate(immediate):
+                self.stack.append(immediate)
+            case PopWordBlk0(slot):
+                value, = self._stack_pop(1)
+                v_bs = self._heap_write("<i", self.block0, slot, value)
+            case PopWordBlk1(slot):
+                value, = self._stack_pop(1)
+                v_bs = self._heap_write("<i", self.block1, slot, value)
+            case PushWordBlk0(slot):
+                value = self._heap_read("<i", self.block0, slot)
+                self.stack.append(value)
+            case op:
+                raise NotImplementedError(f"TODO: implement {op.mnemonic}")
+
+        # most ops do not alter the program counter so we do that here unless
+        # an op specifically indicates it does so
+        if not ctrl_flow_affected:
+            self.pc += op.operands_len + 1
+
+    def step(self):
+        if have_debug(logger):
+            logger.debug(f"IP:\t0x{self.pc:08X}")
+        opcode = self.script[self.pc]
+        op_cls = OPCODE_LOOKUP.get(opcode)
+        if op_cls is None:
+            op = InvalidOp(opcode)
+        else:
+            operand_idx_base = self.pc + 1
+            operands = self.script[operand_idx_base:operand_idx_base + op_cls.operands_len]
+            if len(operands) == 0 and op_cls.operands_len != 0:
+                logger.error(f"read past end of script while parsing operands for {op_cls!r}")
+                raise IndexError(f"indexed past end of script")
+            op = op_cls(operands)
+
+        if have_debug(logger):
+            logger.debug(f"Decoded op as {op!r}")
+
+        self._exec_op(op)
+
+    def run(self):
+        while True:
+            self.step()
 
 
 OPCODE_LOOKUP: dict[int, type[BytecodeOp]] = {op.opcode:op for op in OPCODES}

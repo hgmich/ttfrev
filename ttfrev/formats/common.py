@@ -1,7 +1,18 @@
 from typing import Optional
 from construct import Subconstruct, stream_tell, stream_read, stream_read_entire, SizeofError
 import io
+import logging
 
+
+LOG_FORMAT = "[%(levelname)s] (%(name)s): %(message)s"
+
+
+def have_debug(logger) -> bool:
+    """
+    Guard expensive debugging logic
+    """
+
+    return not logger.disabled and logger.getEffectiveLevel() <= logging.DEBUG
 
 
 # backport from construct
@@ -48,7 +59,7 @@ SPACE_EXE_KEY = 0x312A4CE
 def xor_crypt(bs: bytes, key: int):
     """
     A custom cipher used for protecting CBIN files
-    
+
     The algorithm is a standard XOR crypt cipher w/ a rotating 4 byte key.
     """
     out = bytearray()
@@ -72,7 +83,7 @@ class XorCrypted(Subconstruct):
 
         self.key = key
         self.size = size
-    
+
     def _parse(self, stream, context, path):
         key = self.key(context) if callable(self.key) else self.key
         try:
