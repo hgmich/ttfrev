@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 import logging
 
-log = logging.Logger(__package__)
+log = logging.Logger(__package__ or "rtxt")
 
 from dataclasses import dataclass
 from construct import (
@@ -30,7 +30,7 @@ from construct import (
     Lazy,
 )
 from construct.core import possiblestringencodings
-from construct_dataclasses import DataclassStruct, csfield, subcsfield, to_struct
+from construct_typed import DataclassMixin, DataclassStruct, csfield
 from typing import Any, Union, Optional
 
 from collections import OrderedDict
@@ -45,7 +45,7 @@ possiblestringencodings["iso_8859_1"] = 1
 
 
 @dataclass
-class RTXTHeader:
+class RTXTHeader(DataclassMixin):
     signature: bytes = csfield(Const(b"RTXT"))
     key_table_offset: int = csfield(Default(Hex(Int32ul), 0))
     key_table_length: int = csfield(Rebuild(Hex(Int32ul), 0))
@@ -53,10 +53,10 @@ class RTXTHeader:
 
 
 @dataclass
-class RTXTStringEntry:
+class RTXTStringEntry(DataclassMixin):
     # This offset is relative to the end of RTXTHeader
     _str_offset: int = csfield(Hex(Int32ul))
-    value: str = csfield(Pointer(lambda this: to_struct(RTXTHeader).sizeof() + (to_struct(RTXTHeader).sizeof() * (this._root.header._string_count or len(this._.strings))) + this._str_offset, CString("iso_8859_1")))
+    value: str = csfield(Pointer(lambda this: DataclassStruct(RTXTHeader).sizeof() + (DataclassStruct(RTXTHeader).sizeof() * (this._root.header._string_count or len(this._.strings))) + this._str_offset, CString("iso_8859_1")))
     unk_1: int = csfield(Const(0, Hex(Int32ul)))
     _section_id: int = csfield(Hex(Int32ul))
     section: str = csfield(Lazy(Computed(lambda this: this._.section_data._sect_names[this._section_id])))
@@ -64,7 +64,7 @@ class RTXTStringEntry:
 
 
 @dataclass
-class RTXTSection:
+class RTXTSection(DataclassMixin):
     _offset: int = csfield(Int32ul)
     _num_strings: int = csfield(Int32ul)
     name: str = csfield(Computed(lambda this: this._._sect_names[this._index]))
@@ -77,7 +77,7 @@ class RTXTSection:
 
 
 @dataclass
-class RTXTSectionData:
+class RTXTSectionData(DataclassMixin):
     _num_sects: int = csfield(Rebuild(Int32ul, len_(this.sections)))
     _sect_names: list[str] = csfield(
         Rebuild(Pointer(
@@ -86,27 +86,26 @@ class RTXTSectionData:
             Array(this._num_sects, CString("iso_8859_1")),
         ), lambda this: list(map(lambda sect: sect.name, this.sections)))
     )
-    sections: list[RTXTSection] = subcsfield(RTXTSection,
-        Array(this._num_sects, to_struct(RTXTSection))
+    sections: list[RTXTSection] = csfield(Array(this._num_sects, DataclassStruct(RTXTSection))
     )
 
 
 @dataclass
-class RTXTData:
-    strings: list[RTXTStringEntry] = subcsfield(RTXTStringEntry,
-        Array(lambda this: this._root.header._string_count or len(this.strings), to_struct(RTXTStringEntry))
+class RTXTData(DataclassMixin):
+    strings: list[RTXTStringEntry] = csfield(
+        Array(lambda this: this._root.header._string_count or len(this.strings), DataclassStruct(RTXTStringEntry))
     )
     _string_table: list[str] = csfield(
         Aligned(4, Array(lambda this: this._root.header._string_count or len(this.strings) or 0, CString("iso_8859_1")))
     )
-    section_data: RTXTSectionData = csfield(Rebuild(to_struct(RTXTSectionData), RTXTSectionData(sections=[])))
+    section_data: RTXTSectionData = csfield(Rebuild(DataclassStruct(RTXTSectionData), RTXTSectionData(sections=[])))
 
 
 
 @dataclass
-class RTXTFile:
-    header: RTXTHeader = csfield(Rebuild(to_struct(RTXTHeader), RTXTHeader()))
-    data: RTXTData = csfield(RTXTData)
+class RTXTFile(DataclassMixin):
+    header: RTXTHeader = csfield(Rebuild(DataclassStruct(RTXTHeader), RTXTHeader()))
+    data: RTXTData = csfield(DataclassStruct(RTXTData))
 
     def to_dict(self) -> dict:
         out = OrderedDict()
@@ -169,7 +168,7 @@ def lookup_cmd(args):
             sys.stderr.write(f"element {args.element} not present in section {args.label}\n")
             return False
         key = args.element
-        
+
     else:
         sys.stderr.write("must specify either --index or --label + --element\n")
         return False
@@ -230,7 +229,7 @@ def dump_cmd(args):
                 args.out.write(f"{key}{tab_align}= {line}\r\n".encode(encoding))
             if len(lines) > 1:
                 args.out.write(b"\r\n")
-            
+
         args.out.write(b"\r\n")
 
     return True

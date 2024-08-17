@@ -134,7 +134,7 @@ if __name__ == "__main__":
     from pathlib import Path
 
     parser = argparse.ArgumentParser(description="SBF file inspector")
-    cmd_parsers = parser.add_subparsers()
+    cmd_parsers = parser.add_subparsers(required=True, metavar="cmd")
 
     inspect_parser = cmd_parsers.add_parser(
         "inspect", aliases=["i"], help="inspect a SBF file interactively"

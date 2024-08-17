@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 import logging
 
-log = logging.Logger(__package__)
+log = logging.Logger(__package__ or "cbin")
 
 from dataclasses import dataclass
 import enum
@@ -24,7 +24,7 @@ from construct import (
     RestreamData,
 )
 from construct.core import possiblestringencodings
-from construct_dataclasses import DataclassStruct, csfield, csenum, container, subcsfield, to_struct
+from construct_typed import DataclassMixin, DataclassStruct, csfield, TEnum, EnumBase
 from typing import Any, Union, Optional
 
 from collections import OrderedDict
@@ -38,9 +38,8 @@ from .common import XorCrypted
 possiblestringencodings["iso_8859_1"] = 1
 
 
-@container
 @dataclass
-class CBINHeader:
+class CBINHeader(DataclassMixin):
     signature: bytes = csfield(Const(b"CBIN"))
     string_table_offset: int = csfield(Hex(Int32ul))
     string_table_length: int = csfield(Rebuild(Hex(Int32ul), lambda this: this._root.data.string_table.sizeof()))
@@ -48,17 +47,15 @@ class CBINHeader:
     xor_key: int = csfield(Hex(Int32ul))
 
 
-@container
 @dataclass
-class CBINLabel:
+class CBINLabel(DataclassMixin):
     _str_id: int = csfield(Int32ul)
     name: str = csfield(Computed(lambda this: this._._string_table[this._str_id - 1] if this._str_id != 0 else None))
     num_ents: int = csfield(Int32ul)
 
 
-@container
 @dataclass
-class CBINEntry:
+class CBINEntry(DataclassMixin):
     _str_id: int = csfield(Int32ul)
     name: Optional[str] = csfield(Computed(lambda this: this._._string_table[this._str_id - 1] if this._str_id != 0 else None))
     num_vals: int = csfield(Int32ul)
@@ -68,15 +65,18 @@ class CBINEntry:
         return self.name is None and self.num_vals == 0
 
 
-class ValueType(enum.IntEnum):
+class ValueType(EnumBase):
     INT = 1
     FLOAT = 2
     STRING = 4
 
 
-def convert_value(this):
+def convert_value(this) -> Union[str, int, float]:
     if this.type == ValueType.STRING:
-        return this._._string_table[this._val - 1] if this._val != 0 else None
+        val: str | None = this._._string_table[this._val - 1] if this._val != 0 else None
+        if val is None:
+            raise IndexError(f"Missing string index {this._val}")
+        return val
     elif this.type == ValueType.FLOAT:
         # Truncate to sidestep 32-bit float epsilon issues due to python-forced
         # upconvert to f64
@@ -86,28 +86,27 @@ def convert_value(this):
 
 
 @dataclass
-class CBINValue:
+class CBINValue(DataclassMixin):
     val_bytes: bytes = csfield(Bytes(4))
-    type: ValueType = csenum(ValueType, Int32ul)
+    type: ValueType = csfield(TEnum(Int32ul, ValueType))
     _val: Union[int, float] = csfield(IfThenElse(this.type == ValueType.FLOAT, RestreamData(this.val_bytes, Float32l), RestreamData(this.val_bytes, Int32sl)))
 
     value: Union[str, int, float] = csfield(Computed(convert_value))
 
 
-@container
 @dataclass
-class CBINData:
+class CBINData(DataclassMixin):
     _string_table: list[str] = csfield(Pointer(this._root.header.string_table_offset - DataclassStruct(CBINHeader).sizeof(), Array(this._root.header.string_table_count, CString("iso_8859_1"))))
     num_labels: int = csfield(Int32ul)
-    labels: list[CBINLabel] = subcsfield(CBINLabel, Array(this.num_labels, to_struct(CBINLabel)))
-    entries: list[CBINEntry] = subcsfield(CBINEntry, Array(lambda this: sum(label.num_ents for label in this.labels) + sum(1 if label.num_ents > 0 else 0 for label in this.labels), to_struct(CBINEntry)))
-    values: list[CBINValue] = subcsfield(CBINValue, Array(lambda this: sum(ent.num_vals for ent in this.entries), to_struct(CBINValue)))
+    labels: list[CBINLabel] = csfield(Array(this.num_labels, DataclassStruct(CBINLabel)))
+    entries: list[CBINEntry] = csfield(Array(lambda this: sum(label.num_ents for label in this.labels) + sum(1 if label.num_ents > 0 else 0 for label in this.labels), DataclassStruct(CBINEntry)))
+    values: list[CBINValue] = csfield(Array(lambda this: sum(ent.num_vals for ent in this.entries), DataclassStruct(CBINValue)))
 
 
 @dataclass
-class CBINFile:
-    header: CBINHeader = csfield(CBINHeader)
-    data: CBINData = csfield(XorCrypted(to_struct(CBINData), this.header.xor_key))
+class CBINFile(DataclassMixin):
+    header: CBINHeader = csfield(DataclassStruct(CBINHeader))
+    data: CBINData = csfield(XorCrypted(DataclassStruct(CBINData), this.header.xor_key))
 
     def to_dict(self) -> dict:
         out = OrderedDict()
@@ -117,7 +116,7 @@ class CBINFile:
         for label in self.data.labels:
             while len(entries) > 0 and entries[0].is_nil:
                 entries = entries[1:]
-            
+
             my_entries = entries[:label.num_ents]
             entries = entries[label.num_ents:]
 
@@ -134,7 +133,7 @@ class CBINFile:
                     entry_values = None
                 else:
                     entry_values = tuple(entry_values)
-                
+
                 label_entries.append((entry.name, entry_values))
 
             if label_name in out:
@@ -173,18 +172,18 @@ def dump_cmd(args):
     for label, entries in config_dict.items():
         if label != '':
             args.out.write(f"[{label}]\r\n".encode(encoding))
-        
+
         for name, values in entries:
             if values is None:
                 values = tuple()
             elif not isinstance(values, tuple):
                 values = values,
-            
+
             tab_align = (3 - len(name) // 8) * '\t'
             args.out.write(f"{name}{tab_align}= {','.join(map(str, values))}\r\n".encode(encoding))
 
         args.out.write(b"\r\n")
-    
+
     return True
 
 
@@ -203,7 +202,7 @@ def dump_json_cmd(args):
     data = [{"label": label, "entries": list(map(lambda ent: {"entry": ent[0], "value": ent[1]}, entries))} for label, entries in data.items()]
 
     json.dump(data, args.out, indent=4)
-    
+
     return True
 
 

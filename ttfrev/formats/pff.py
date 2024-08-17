@@ -44,7 +44,7 @@ class PFF3EntryFlags(DataclassMixin):
 
 @dataclass
 class PFF3Entry(DataclassMixin):
-    flags: int = csfield(Bitwise(DataclassStruct(PFF3EntryFlags)))
+    flags: PFF3EntryFlags = csfield(Bitwise(DataclassStruct(PFF3EntryFlags)))
     # flags: int = csfield(Hex(Int32ul))
     offset: int = csfield(
         Hex(Int32ul),

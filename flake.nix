@@ -9,8 +9,8 @@
     let
       ttfrevBase = (poetry2nix: {
         projectDir = ./.;
-        overrides = poetry2nix.overrides.withDefaults (self: super: { 
-          construct-dataclasses = super.construct-dataclasses.overridePythonAttrs (
+        overrides = poetry2nix.overrides.withDefaults (self: super: {
+          construct-typing = super.construct-typing.overridePythonAttrs (
             old: {
               buildInputs = (old.buildInputs or [ ]) ++ [ super.setuptools ];
             }
