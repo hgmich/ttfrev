@@ -299,6 +299,17 @@ tomli = {version = ">=1.0.0", markers = "python_version < \"3.11\""}
 testing = ["argcomplete", "attrs (>=19.2.0)", "hypothesis (>=3.56)", "mock", "nose", "pygments (>=2.7.2)", "requests", "setuptools", "xmlschema"]
 
 [[package]]
+name = "readchar"
+version = "4.2.0"
+description = "Library to easily read single chars and key strokes"
+optional = false
+python-versions = ">=3.8"
+files = [
+    {file = "readchar-4.2.0-py3-none-any.whl", hash = "sha256:2a587a27c981e6d25a518730ad4c88c429c315439baa6fda55d7a8b3ac4cb62a"},
+    {file = "readchar-4.2.0.tar.gz", hash = "sha256:44807cbbe377b72079fea6cba8aa91c809982d7d727b2f0dbb2d1a8084914faa"},
+]
+
+[[package]]
 name = "sortedcontainers"
 version = "2.4.0"
 description = "Sorted Containers -- Sorted List, Sorted Dict, Sorted Set"
@@ -334,4 +345,4 @@ files = [
 [metadata]
 lock-version = "2.0"
 python-versions = "^3.9"
-content-hash = "fb0c95c47b3f6daf706d3b4c02471070d9a3700605f54d136b51332981cee829"
+content-hash = "a2b9cbddee6d4c7159b9bd600c01a2d3abb49d1b7c4cd541550c225968c64812"

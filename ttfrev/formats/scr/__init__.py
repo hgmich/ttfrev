@@ -177,7 +177,7 @@ def execute_cmd(args):
         cmd_list=scr.commands,
     )
 
-    vm.run()
+    vm.run(step=args.step)
 
 
 def main():
@@ -237,7 +237,7 @@ def main():
     disassemble_parser.set_defaults(handler=disassemble_cmd)
 
     execute_parser = cmd_parsers.add_parser(
-        "execute", aliases=["r", "exec"], help="execute script"
+        "execute", aliases=["e", "exec"], help="execute script"
     )
     execute_parser.add_argument(
         "file",
@@ -258,6 +258,15 @@ def main():
         type=int,
         default=0,
         help="which entry point to use",
+    )
+
+    execute_parser.add_argument(
+        "-s",
+        "--step-through",
+        dest="step",
+        action="store_true",
+        default=False,
+        help="step through execution op-by-op",
     )
     execute_parser.set_defaults(handler=execute_cmd)
 

@@ -1,9 +1,12 @@
 from os import W_OK
 import struct
+import sys
 from typing import Optional, ClassVar, Any, Callable, Generic, TypeVar
 from collections import defaultdict
 from io import BufferedIOBase, BytesIO
 import logging
+
+import readchar
 
 from ttfrev.formats.common import have_debug
 
@@ -655,10 +658,9 @@ class JumpUnconditional(BytecodeOp):
 
 class JumpZero(BytecodeOp):
     """
-    If the top item in the stack is zero, moves the program counter of the
-    bytecode interpreter to `target` relative to the start of the bytecode
-    program. Otherwise, execution continues as normal. The stack is
-    not modified.
+    Pop the top item off the stack. If it is zero, moves the program
+    counter of the bytecode interpreter to `target` relative to the start of
+    the bytecode program. Otherwise, execution continues as normal.
     """
 
     __match_args__ = ('target',)
@@ -674,10 +676,9 @@ class JumpZero(BytecodeOp):
 
 class JumpNotZero(BytecodeOp):
     """
-    If the top item in the stack is not zero, moves the program counter of
-    the bytecode interpreter to `target` relative to the start of the bytecode
-    program. Otherwise, execution continues as normal. The stack is
-    not modified.
+    Pop the top item off the stack. If it is not zero, moves the program
+    counter of the bytecode interpreter to `target` relative to the start of
+    the bytecode program. Otherwise, execution continues as normal.
     """
 
     __match_args__ = ('target',)
@@ -969,6 +970,8 @@ class Interpreter:
 
     def _exec_op(self, op: BytecodeOp):
         ctrl_flow_affected = False
+        if len(self.stack) > 255:
+            raise OverflowError("stack overflow")
 
         match op:
             case Nop():
@@ -986,6 +989,55 @@ class Interpreter:
             case PushWordBlk0(slot):
                 value = self._heap_read("<i", self.block0, slot)
                 self.stack.append(value)
+            case SoundCmd(cmd):
+                print(f"Sound command {cmd:02X}")
+            case PopAll():
+                self.stack.clear()
+            case SwitchScript(script_id):
+                # TODO: is this right?
+                logger.info(f"Switched to entry point {script_id:02X}")
+                self.pc = self.entry_points[script_id]
+                ctrl_flow_affected = True
+            case JumpUnconditional(pc):
+                self.pc = pc
+                ctrl_flow_affected = True
+            case JumpNotZero(pc):
+                cond, = self._stack_pop(1)
+                if cond != 0:
+                    self.pc = pc
+                    ctrl_flow_affected = True
+            case JumpZero(pc):
+                # peek the stack
+                cond, = self._stack_pop(1)
+                if cond == 0:
+                    self.pc = pc
+                    ctrl_flow_affected = True
+            case Compare():
+                a, b = self._stack_pop(2)
+                self.stack.append(-1 if a == b else 0)
+            case CompareNotEqual():
+                a, b = self._stack_pop(2)
+                self.stack.append(-1 if a != b else 0)
+            case CompareGreaterEqual():
+                a, b = self._stack_pop(2)
+                self.stack.append(-1 if a >= b else 0)
+            case CompareLessEqual():
+                a, b = self._stack_pop(2)
+                self.stack.append(-1 if a <= b else 0)
+            case CompareGreaterThan():
+                a, b = self._stack_pop(2)
+                self.stack.append(-1 if a > b else 0)
+            case CompareGreaterThan():
+                a, b = self._stack_pop(2)
+                self.stack.append(-1 if a < b else 0)
+            case LogicalAnd():
+                a, b = self._stack_pop(2)
+                self.stack.append(-1 if a and b else 0)
+            case LogicalOr():
+                a, b = self._stack_pop(2)
+                self.stack.append(-1 if a or b else 0)
+            case PlaySoundHalfWord(sound_id) | PlaySoundByte(sound_id):
+                print(f"Play sound {sound_id:02X}")
             case op:
                 raise NotImplementedError(f"TODO: implement {op.mnemonic}")
 
@@ -996,7 +1048,8 @@ class Interpreter:
 
     def step(self):
         if have_debug(logger):
-            logger.debug(f"IP:\t0x{self.pc:08X}")
+            stack = ', '.join(map(lambda item: f"0x{item:08X}", self.stack))
+            logger.debug(f"TRACE - IP:\t0x{self.pc:08X}\tSTACK:\t[{stack}]")
         opcode = self.script[self.pc]
         op_cls = OPCODE_LOOKUP.get(opcode)
         if op_cls is None:
@@ -1014,9 +1067,30 @@ class Interpreter:
 
         self._exec_op(op)
 
-    def run(self):
-        while True:
+    def run(self, step: bool = False):
+        running = True
+        step2 = step
+        while running:
             self.step()
+            if step2:
+                proceed = False
+                while not proceed:
+                    print("(n)ext\t(c)ontinue\t(a)bort")
+                    match readchar.readkey():
+                        case "":
+                            raise EOFError()
+                        case "\n":
+                            continue
+                        case "c":
+                            step2 = False
+                            break
+                        case "n":
+                            break
+                        case "a":
+                            return
+                        case unk:
+                            print(f"unknown command '{unk}'")
+
 
 
 OPCODE_LOOKUP: dict[int, type[BytecodeOp]] = {op.opcode:op for op in OPCODES}
